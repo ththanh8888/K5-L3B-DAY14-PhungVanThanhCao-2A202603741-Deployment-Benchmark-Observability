@@ -1,0 +1,48 @@
+name: Eval quality gate
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  eval:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: 06-lab-complete/benchmark-observability/develop
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Cài dependencies
+        run: pip install -r requirements.txt
+
+      - name: Khởi động agent v2
+        run: |
+          AGENT_VERSION=v2 PORT=8002 nohup python app.py > agent.log 2>&1 &
+          for i in $(seq 1 30); do
+            curl -sf http://localhost:8002/health && exit 0
+            sleep 1
+          done
+          echo "Agent không khởi động được"; cat agent.log; exit 1
+
+      # run_eval.py trả exit code 1 khi accuracy dưới ngưỡng hoặc có câu regression
+      # so với baseline → step fail → PR bị chặn merge (khi bật branch protection).
+      - name: Quality gate
+        run: |
+          python eval/run_eval.py \
+            --url http://localhost:8002 \
+            --min-accuracy 1.0 \
+            --baseline ../../../reports/eval_v2_fixed.json \
+            --out /tmp/eval_pr.json
+
+      - name: Upload report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: eval-report
+          path: /tmp/eval_pr.json
